@@ -33,7 +33,7 @@ while [[ $# -gt 0 ]]; do
             echo "用法: $0 [选项] [提交信息]"
             echo ""
             echo "选项:"
-            echo "  -a, --all      提交所有更改(默认行为)"
+            echo "  -a, --all      提交所有更改(包括新文件)"
             echo "  -s, --staged   只提交已暂存的文件"
             echo "  -h, --help     显示此帮助信息"
             echo ""
@@ -47,8 +47,12 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# 1. 检查是否有更改
-if git diff --cached --quiet && git diff --quiet; then
+# 1. 检查是否有更改(包括新文件)
+# 使用 git status --porcelain 可以检测到所有类型的改动
+HAS_STAGED=$(git diff --cached --quiet && echo "false" || echo "true")
+HAS_UNSTAGED=$(git status --porcelain | grep -q '^ M\|^M \|^MM\|^ D\|^??' && echo "true" || echo "false")
+
+if [ "$HAS_STAGED" = "false" ] && [ "$HAS_UNSTAGED" = "false" ]; then
     echo -e "${GREEN}============================================${NC}"
     echo -e "${GREEN}✅ 工作区和暂存区都很干净,无需提交。${NC}"
     echo -e "${GREEN}============================================${NC}"
@@ -74,10 +78,10 @@ case $MODE in
         echo -e "${BLUE}🚀 模式: 选择性提交${NC}"
         echo ""
 
-        # 获取所有更改的文件
-        mapfile -t MODIFIED_FILES < <(git status --porcelain | awk '{print $2}')
+        # 获取所有更改的文件(包括未跟踪的新文件)
+        mapfile -t ALL_FILES < <(git status --porcelain | sed 's/^...//; s/^"//; s/"$//')
 
-        if [ ${#MODIFIED_FILES[@]} -eq 0 ]; then
+        if [ ${#ALL_FILES[@]} -eq 0 ]; then
             echo -e "${GREEN}✅ 没有修改的文件。${NC}"
             exit 0
         fi
@@ -86,15 +90,25 @@ case $MODE in
         echo -e "${YELLOW}发现以下修改的文件:${NC}"
         echo ""
 
-        for i in "${!MODIFIED_FILES[@]}"; do
-            FILE="${MODIFIED_FILES[$i]}"
-            STATUS=$(git status --porcelain "$FILE" | awk '{print $1}')
+        DISPLAY_FILES=()
+        for i in "${!ALL_FILES[@]}"; do
+            FILE="${ALL_FILES[$i]}"
+            # 跳过空行
+            [ -z "$FILE" ] && continue
+
+            DISPLAY_FILES+=("$FILE")
+        done
+
+        for i in "${!DISPLAY_FILES[@]}"; do
+            FILE="${DISPLAY_FILES[$i]}"
+            STATUS=$(git status --porcelain | grep -F "$FILE" | awk '{print $1}')
 
             case $STATUS in
-                M) STATUS_TEXT="${YELLOW}[已修改]${NC}" ;;
-                A) STATUS_TEXT="${GREEN}[新增]${NC}" ;;
+                M|MM|AM) STATUS_TEXT="${YELLOW}[已修改]${NC}" ;;
+                A) STATUS_TEXT="${GREEN}[新增已暂存]${NC}" ;;
                 D) STATUS_TEXT="${RED}[已删除]${NC}" ;;
-                ??) STATUS_TEXT="${BLUE}[未跟踪]${NC}" ;;
+                ??) STATUS_TEXT="${BLUE}[新建未跟踪]${NC}" ;;
+                R) STATUS_TEXT="${GREEN}[重命名]${NC}" ;;
                 *) STATUS_TEXT="[${STATUS}]" ;;
             esac
 
@@ -151,8 +165,8 @@ case $MODE in
             ADDED_COUNT=0
             for IDX in "${SELECTED_INDICES[@]}"; do
                 ARRAY_IDX=$((IDX-1))
-                if [ $ARRAY_IDX -ge 0 ] && [ $ARRAY_IDX -lt ${#MODIFIED_FILES[@]} ]; then
-                    FILE="${MODIFIED_FILES[$ARRAY_IDX]}"
+                if [ $ARRAY_IDX -ge 0 ] && [ $ARRAY_IDX -lt ${#DISPLAY_FILES[@]} ]; then
+                    FILE="${DISPLAY_FILES[$ARRAY_IDX]}"
                     git add "$FILE"
                     echo -e "${GREEN}  ✓${NC} 已添加: $FILE"
                     ((ADDED_COUNT++))
@@ -184,6 +198,7 @@ git diff --cached --name-status | while read STATUS FILE; do
         M) echo -e "  ${YELLOW}修改:${NC} $FILE" ;;
         A) echo -e "  ${GREEN}新增:${NC} $FILE" ;;
         D) echo -e "  ${RED}删除:${NC} $FILE" ;;
+        R*) echo -e "  ${GREEN}重命名:${NC} $FILE" ;;
         *) echo -e "  [$STATUS] $FILE" ;;
     esac
 done
