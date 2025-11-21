@@ -170,6 +170,7 @@ def run_scheduler():
 
 if __name__ == "__main__":
     # 方式1: 立即运行一次
+    print("MAIN ENTRY !!!")
     print("选择运行模式:")
     print("1. 立即获取一次新闻")
     print("2. 启动定时任务(每天早上8点)")
